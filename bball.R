@@ -216,7 +216,218 @@ detach(Pbox.PG)
 radialprofile(data=X, title=Pbox.PG$Player, std=FALSE,ncol.arrange = 5)
 
 
-# Next is the court view of throws.
+# Next is the court view of throws. For this we need play by play data 
+
+# So what variables do we need for the court shots?
+
+
+rm(list=ls())
+PbP <- PbPmanipulation(PbP.BDB)
+
+subdata <- subset(PbP, player=="Stephen Curry")
+subdata$xx <- subdata$original_x/10
+subdata$yy <- subdata$original_y/10-41.75
+
+shotchart(data=subdata, x="xx", y="yy", type=NULL,
+          scatter=TRUE)
+
+shotchart(data=subdata, x="xx", y="yy", z="result", type=NULL,
+          scatter=TRUE)
+
+shotchart(data=subdata, x="xx", y="yy", z="playlength", 
+          num.sect=5, type="sectors", scatter = TRUE)
+
+shotchart(data=subdata, x="xx", y="yy", z="playlength", 
+          num.sect=5, type="sectors", scatter=FALSE, result="result")
+
+
+# It looks like we have everything, so first we subset the 
+# data for season 2023 and Curry only:
+
+nba_pbp %>%  
+  filter(season == 2023 & athlete_id_1 == 3975 & shooting_play == TRUE &!grepl("Free Throw",type_text)) %>% 
+  select(coordinate_x,coordinate_y,coordinate_x_raw,coordinate_y_raw,scoring_play,score_value,
+         shooting_play,clock_minutes) %>% 
+  mutate(result=as.factor(if_else(scoring_play == TRUE, "made","missed")))-> curry_shots
+
+subdata <- curry_shots %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
+
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE) -> p1
+
+shotchart(data=subdata, x="xx", y="yy", type="density-raster",
+          scatter=FALSE)-> p2
+
+shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
+          num.sect=5, type="sectors", scatter=FALSE, result="result") -> p3
+
+p1+p2
+
+p3
+library(patchwork)
+
+# Modelling:
+
+nba_player_box %>%
+  select(athlete_id,athlete_display_name) %>% 
+  distinct() %>%
+  arrange(athlete_id)-> player_ids
+
+player_ids %>% 
+  group_by(athlete_id) %>%
+  mutate(row = row_number()) %>%
+  filter(row==1) %>% 
+  ungroup() %>% 
+  select(athlete_id,athlete_display_name) -> player_ids
+
+nba_team_box %>% 
+  filter(season <= 2023 & team_display_name == "Golden State Warriors") %>%
+  select(game_id,opponent_team_name) -> game_ids
+
+nba_pbp %>%  
+  filter(season <= 2023 & 
+           athlete_id_1 == 3975 &
+           shooting_play == TRUE &
+           !grepl("Free Throw",type_text)) %>% 
+  select(game_id,coordinate_x_raw,coordinate_y_raw,scoring_play,
+         clock_minutes, athlete_id_2,clock_minutes,clock_seconds,qtr) %>% 
+  left_join(player_ids,by=c("athlete_id_2"="athlete_id")) %>% 
+  inner_join(game_ids, by=join_by(game_id)) %>% 
+  select(-athlete_id_2) %>% 
+  rename(oponent_athlete=athlete_display_name) %>% 
+  mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
+         scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
+
+# Dataset is ready to model:
+
+library(tidymodels)
+
+# Create splits:
+
+set.seed(123)
+steph_split <- initial_split(base_steph_pbp, prop = 0.8, strata = scoring_play)
+steph_train <- training(steph_split)
+steph_test <- testing(steph_split)
+
+steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
+
+# Preprocessing:
+# Add new step to address NAs
+
+steph_recipe <- recipe(scoring_play ~ ., data = steph_train) %>%
+  update_role(game_id, new_role = "ID") %>%
+  step_dummy(all_nominal(), -all_outcomes()) 
+
+xgb_spec <- boost_tree(
+  trees = 1250,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = tune(),
+  sample_size = tune(),
+  mtry = tune(),
+  learn_rate = tune()
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+
+steph_workflow <- workflow() %>%
+  add_recipe(steph_recipe) %>%
+  add_model(xgb_spec)
+
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), steph_train),
+  learn_rate(),
+  size = 30
+)
+
+doParallel::registerDoParallel() # Activate parallel computing
+set.seed(1234)
+
+xgb_results <-  tune_grid(
+  steph_workflow,
+  resamples = steph_folds,
+  grid = xgb_grid,
+  control = control_grid(save_pred = TRUE)
+)
+
+xgb_results %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  select(mean, mtry:sample_size) %>%
+  pivot_longer(mtry:sample_size,
+               values_to = "value",
+               names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean)) +
+  geom_point(alpha = 0.8, show.legend = FALSE, color="midnightblue") +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "AUC")+
+  scale_color_brewer(palette = "Spectral")+
+  theme_minimal()
+
+# Select best model and finalise workflow:
+
+best_auc_model <- select_best(xgb_results,"roc_auc")
+
+final_xgb <- finalize_workflow(
+  steph_workflow,
+  best_auc_model)
+
+final_xgb %>%
+  fit(data = steph_train) %>%
+  extract_fit_parsnip() %>%
+  vip(geom = "point") +
+  theme_minimal()
+
+final_res <- last_fit(final_xgb, steph_split)
+
+# This can also be done with  the final_res object
+
+final_xgb %>%
+  fit(data = steph_train) -> fit_steph
+
+augment(fit_steph,steph_test)%>% 
+  roc_curve(truth = scoring_play, .pred_TRUE) %>% 
+  autoplot()
+
+final_res %>%
+  collect_predictions() %>%
+  roc_curve(scoring_play, `.pred_TRUE`) %>%
+  ggplot(aes(x = 1 - specificity, y = sensitivity)) +
+  geom_line(linewidth = 1.5, color = "midnightblue") +
+  geom_abline(
+    lty = 2, alpha = 0.5,
+    color = "gray50",
+    linewidth = 1.2)+
+  theme_minimal()
+
+collect_metrics(final_res)
+
+collect_predictions(final_res) %>%
+  conf_mat(scoring_play, .pred_class) %>%
+  autoplot()+
+  theme_minimal()
+
+# Consult this page for more info on how to 
+# predict with the model:
+
+https://www.tidymodels.org/start/recipes/
+
+
+
+
+
+
+
+
+
+
+
 
 
 
