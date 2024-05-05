@@ -317,10 +317,11 @@ steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
 
 steph_recipe <- recipe(scoring_play ~ ., data = steph_train) %>%
   update_role(game_id, new_role = "ID") %>%
+  step_novel(all_nominal(), -all_outcomes()) %>%
   step_dummy(all_nominal(), -all_outcomes()) 
 
 xgb_spec <- boost_tree(
-  trees = 1250,
+  trees = 5000,
   tree_depth = tune(),
   min_n = tune(),
   loss_reduction = tune(),
@@ -418,17 +419,83 @@ collect_predictions(final_res) %>%
 
 https://www.tidymodels.org/start/recipes/
 
+# Get the data for the new season:
+# So we filtered the data for the Golden State Warriors:
+
+  nba_team_box %>% 
+  filter(season == 2024 & team_display_name == "Golden State Warriors") %>%
+  select(game_id,opponent_team_name) -> game_ids
+  
+  
+  nba_pbp %>%  
+  filter(season == 2024 & 
+           athlete_id_1 == 3975 &
+           shooting_play == TRUE &
+           !grepl("Free Throw",type_text)) %>% 
+  select(game_id,coordinate_x_raw,coordinate_y_raw,scoring_play,
+         clock_minutes, athlete_id_2,clock_minutes,clock_seconds,qtr) %>% 
+  left_join(player_ids,by=c("athlete_id_2"="athlete_id")) %>% 
+  inner_join(game_ids, by=join_by(game_id)) %>% 
+  select(-athlete_id_2) %>% 
+  rename(oponent_athlete=athlete_display_name) %>% 
+  mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
+         scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp_2024
+
+  
+# Should probably first fit to the whole dataset and then predict:
+  
+final_xgb %>%
+    fit(data = base_steph_pbp) -> fit_steph
+
+predict(fit_steph,base_steph_pbp_2024)
+
+augment(fit_steph, base_steph_pbp_2024) %>%
+  roc_curve(truth = scoring_play, .pred_TRUE) %>% 
+  autoplot()
+
+augment(fit_steph, base_steph_pbp_2024) %>%
+  roc_auc(truth = scoring_play, .pred_TRUE)
+
+augment(fit_steph, base_steph_pbp_2024) -> steph_preds_2024
+
+# Plot the predictions on the court:
+
+# Flow 1: Predictions
+
+steph_preds_2024 %>% 
+  select(coordinate_x_raw,coordinate_y_raw,.pred_class,clock_minutes) %>%
+  mutate(result=as.factor(if_else(.pred_class == TRUE,"made","missed")))->curry_shots_2024
+
+subdata <- curry_shots_2024 %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
+
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE) +ggtitle(label = "   Testing title") -> p1
+
+shotchart(data=subdata, x="xx", y="yy", type="density-raster",
+          scatter=FALSE)-> p2
+
+shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
+          num.sect=5, type="sectors", scatter=FALSE, result="result") -> p3
+
+# Flow 2: Actual
 
 
+steph_preds_2024 %>% 
+  select(coordinate_x_raw,coordinate_y_raw,scoring_play,clock_minutes) %>%
+  mutate(result=as.factor(if_else(scoring_play == TRUE,"made","missed")))->curry_shots_2024
 
+subdata <- curry_shots_2024 %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
 
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE) -> p1
 
+shotchart(data=subdata, x="xx", y="yy", type="density-raster",
+          scatter=FALSE)-> p2
 
-
-
-
-
-
+shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
+          num.sect=5, type="sectors", scatter=FALSE, result="result") -> p3
 
 
 
