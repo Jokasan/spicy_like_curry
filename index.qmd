@@ -1,0 +1,333 @@
+---
+title: "Spicy Like Curry - To shoot or not to shoot?"
+author: "Nils Indreiten"
+format: 
+  html:
+    theme: united
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+---
+
+## Executive Summary
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(BasketballAnalyzeR,tidyverse,zoo,gt,hoopR,patchwork,tidymodels,reactablefmtr,htmltools,crosstalk,patchwork,shiny)
+
+team_logos <- readr::read_csv("Logo_info.csv") %>% 
+  select(TEAM_LOGO,TEAM_NAME,CONFERENCE) %>% 
+  unique() %>% 
+ rbind(c("https://upload.wikimedia.org/wikipedia/en/thumb/2/21/Portland_Trail_Blazers_logo.svg/2560px-Portland_Trail_Blazers_logo.svg.png","Portland Trail Blazers", "Western")) %>% 
+  mutate(TEAM_NAME=if_else(TEAM_NAME == "Los Angeles Clippers","LA Clippers",TEAM_NAME)) 
+
+nba_team_box <- read_csv("nba_team_box.csv")
+nba_player_box <- read_csv("nba_player_box.csv")
+nba_pbp <- read_csv("nba_pbp.csv")
+```
+
+The idea for this project came from a conversation with a friend, we were discussing
+whether it is possible to predict whether a basketball player will make a shot or not. 
+In specific, the question was whether _Stephen Curry_ would make a shot.
+This project aims to predict whether Stephen Curry will make a shot 
+at a play-by-play level, based on a variety of features. 
+
+The project is structured as follows: First general trends in the NBA
+are explored, honing in on the point guard position, which is Curry's
+position. Then a few key features are selected and an XGBoost classifier
+is trained and tested. The model performance is then evaluated in unseen
+data, season 2024. The model was trained and tested on data from the 2022 
+and 2023 seasons. Finally, the findings are concluded and future research 
+directions are suggested.
+
+## Exploratory Data Analysis & Data Wrangling
+
+### Data Collection
+
+Since Stephen Curry is a point guard, let's focus on the trends for that 
+position. First, let's take a look at the overall stats for all point 
+guards in the NBA. The _hoopR_ package let's users retrieve NBA data at different
+levels of granularity, for this we need data at all levels of aggregations, therefore
+we retrieve team box, player box, and play by play data:
+
+```{r}
+#| eval: false
+
+# NBA team box data, 2022-2024 seasons:
+nba_team_box <- hoopR::load_nba_team_box(2022:hoopR::most_recent_nba_season())
+
+# NBA player box data, 2022-2024 seasons:
+nba_player_box <- hoopR::load_nba_player_box(2022:hoopR::most_recent_nba_season())
+
+# NBA play by play data, 2022-2024 seasons:
+nba_pbp <- hoopR::load_nba_pbp(2022:hoopR::most_recent_nba_season())
+
+```
+
+We now have three dataframes, each denoting different information, then `nba_team_box`
+dataframe is the most broad, followed by `nba_player_box` and `nba_pbp` which are more 
+granular. Next, using the `nba_player_box` dataframe as the starting point, we filter
+only for point guards and then aggregate the data to get a sense of the overall perfromance
+by player and team:
+
+```{r}
+#| message: false
+
+# Team names data frame:
+
+team_names <- nba_team_box %>% 
+  select(team_name,team_display_name) %>% 
+  unique()
+
+# Filter nba_player_box, for point guards
+
+nba_player_box %>% 
+  filter(athlete_position_name == "Point Guard") -> point_guard_df
+
+# Select columns that we need 
+point_guard_df %>% 
+  select(season,athlete_id,athlete_display_name,athlete_position_name,team_name,
+         minutes,field_goals_made,three_point_field_goals_made,free_throws_made,
+         rebounds,assists,offensive_rebounds,defensive_rebounds,steals,blocks) -> pg_stats
+
+# PG stats summary  
+
+pg_stats %>% 
+  filter(season == 2023 & !grepl("Team",team_name)) %>%
+  group_by(athlete_display_name, team_name) %>% 
+  mutate(total_points =    sum(
+    field_goals_made + three_point_field_goals_made + free_throws_made,
+    na.rm = TRUE
+  )) %>% 
+  ungroup() %>%
+  group_by(athlete_display_name, team_name) %>% 
+  summarise(
+  minutes = sum(minutes, na.rm = TRUE),
+  field_goals_made = mean(field_goals_made, na.rm = TRUE),
+  three_point_field_goals_made = mean(three_point_field_goals_made, na.rm = TRUE),
+  free_throws_made = mean(free_throws_made, na.rm = TRUE),
+  assists = mean(assists, na.rm = TRUE),
+  rebounds = mean(offensive_rebounds + defensive_rebounds, na.rm = TRUE),
+  total_points = sum(max(total_points))) %>%
+  arrange(desc(total_points)) %>% 
+  ungroup() -> pg_stats
+
+pg_stats %>% 
+  head(5) 
+```
+
+The resulting data frame contains a summary of the player performance for the 
+2023 season, summarised by player & team. Let's wrap the dataframe in a reactive
+framework, so that you (the reader), can filter and slice the data as you wish:
+
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+
+# Reactive set up
+pg_stats %>% 
+  left_join(team_names, by = c("team_name" = "team_name")) %>% 
+  left_join(team_logos, by = c("team_display_name" = "TEAM_NAME")) %>% 
+  select(athlete_display_name,TEAM_LOGO,everything()) ->pg_stats
+
+### create shared dataset for crosstalk
+crosstalk_data <- SharedData$new(pg_stats)
+
+### crosstalk team filter
+team_filter <- filter_select(
+  id = "team",
+  label = "TEAM",
+  sharedData = crosstalk_data,
+  group = ~ team_display_name
+)
+
+### crosstalk conference filter
+conference_filter <- filter_select(
+  id = "conf",
+  label = "CONFERENCE",
+  sharedData = crosstalk_data,
+  group = ~ CONFERENCE
+)
+
+### crosstalk minutes filter
+minutes_filter <- filter_slider(
+  id = "minutes",
+  label = "MINUTES PLAYED",
+  sharedData = crosstalk_data,
+  column = ~ minutes,
+  ticks = TRUE,
+  dragRange = FALSE,
+  step = 500,
+  width = "60%"
+)
+
+### load font from google fonts
+htmltools::tags$link(href = "https://fonts.googleapis.com/css?family=Chivo:400,600,700&display=swap", rel = "stylesheet")
+
+nba_table <- reactable(
+  crosstalk_data,
+  theme = fivethirtyeight(centered = TRUE),
+  compact = TRUE,
+  columnGroups = list(
+    colGroup(name = "OVERALL STATS", columns = c("field_goals_made","three_point_field_goals_made","free_throws_made","assists","rebounds"))
+  ),
+  showSortIcon = FALSE,
+  searchable = TRUE,
+  language = reactableLang(
+    searchPlaceholder = "SEARCH FOR A PLAYER..."
+  ),
+  defaultPageSize = 10,
+  columns = list(
+    team_display_name = colDef(show = FALSE),
+    team_name = colDef(show = FALSE),
+    CONFERENCE = colDef(show = FALSE),
+    TEAM_LOGO = colDef(
+      name = "Team",
+      maxWidth = 70,
+      align = "center",
+      cell = embed_img(height = 25, width = 40),
+      style = list(borderRight = "1px solid #777")
+    ),
+    athlete_display_name = colDef(minWidth = 150,
+                                  name = "Player",
+                                  # merge the "Name" column with the "Postion" column and place it below
+                                  cell = merge_column(pg_stats, "team_name", merged_position = "below"),
+                                  style = list(borderRight = "1px solid #777")),
+    minutes = colDef(
+      name = "Minutes",
+      maxWidth = 85,
+      align = "center",
+      cell = icon_assign(
+        pg_stats,
+        icon = "stopwatch",
+        fill_color = "#555555",
+        buckets = 5
+      ),
+      style = list(borderRight = "1px dashed rgba(0, 0, 0, 0.3)")
+    ),
+    field_goals_made = colDef(
+      name = "AFG",
+      maxWidth = 60,
+      style = color_scales(pg_stats, colors = c("#fd84a9", "white", "#42c2ca")),
+      format = colFormat(digits =2)
+    ),
+    three_point_field_goals_made = colDef(
+      name = "3PAFG",
+      maxWidth = 60,
+      style = color_scales(pg_stats, colors = c("#fd84a9", "white", "#42c2ca")),
+      format = colFormat(digits =2)
+    ),
+    free_throws_made = colDef(
+      name = "AFT",
+      maxWidth = 60,
+      style = color_scales(pg_stats, colors = c("#fd84a9", "white", "#42c2ca")),
+      format = colFormat(digits =2)
+    ),
+    assists = colDef(
+      name = "AST",
+      maxWidth = 60,
+      style = color_scales(pg_stats, colors = c("#fd84a9", "white", "#42c2ca")),
+      format = colFormat(digits =2)
+    ),
+    rebounds = colDef(
+      name = "REB",
+      maxWidth = 60,
+      style = color_scales(pg_stats, colors = c("#fd84a9", "white", "#42c2ca")),
+      format = colFormat(digits =2)
+    ),
+    total_points = colDef(
+      name = "TPTS",
+      minWidth = 150,
+      align = "center",
+      cell = data_bars(
+        pg_stats,
+        fill_color = c("#de425b", "#ec9c9d", "#8cbcac", "#488f31"),
+        number_fmt = scales::comma_format(),
+        round_edges = TRUE,
+        border_style = "solid",
+        border_color = "gold",
+        border_width = ".8px",
+        text_position = "above"),
+      style = list(borderLeft = "1px dashed rgba(0, 0, 0, 0.3)")
+    )
+  )
+)
+
+### display crosstalk filters
+div(
+  style = "display: flex;",
+  div(style = "margin-right: 10px; width: 80%;", team_filter),
+  div(style = "margin-right: 10px; width: 60%;", conference_filter),
+  div(style = "width: 150%;", minutes_filter)
+)
+
+### display table
+div(nba_table)
+```
+
+
+```{r}
+pg_stats %>% 
+  select(team_name,athlete_display_name,field_goals_made,three_point_field_goals_made,free_throws_made,rebounds,assists) %>%
+  rename(
+    Team = team_name,
+    Player = athlete_display_name,
+    P2M = field_goals_made,
+    P3M = three_point_field_goals_made,
+    FTM = free_throws_made,
+    REB = rebounds,
+    AST = assists) %>% 
+  mutate(Player = case_when(Team == "Nets" & Player == "Kyrie Irving" ~ "Kyrie Irving (BKN)",
+                            Team == "Mavericks" & Player == "Kyrie Irving" ~ "Kyrie Irving (DAL)",
+                            TRUE ~ Player)) %>%
+  as.data.frame() %>% 
+  arrange(desc(P2M)) %>% 
+  slice_head(n = 6) -> Pbox.PG
+  
+attach(Pbox.PG)
+X <- data.frame(P2M, P3M, FTM, REB, AST)
+
+detach(Pbox.PG)
+radialprofile(data=X, title=Pbox.PG$Player, std=FALSE,ncol.arrange = 3,)
+
+```
+
+
+```{r}
+
+nba_pbp %>%  
+  filter(season == 2023) %>% 
+  select(coordinate_x,coordinate_y,coordinate_x_raw,coordinate_y_raw,scoring_play,score_value,
+         shooting_play,clock_minutes) %>% 
+  mutate(result=as.factor(if_else(scoring_play == TRUE, "made","missed")))-> curry_shots
+
+
+subdata <- curry_shots %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
+
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)->p1
+
+shotchart(data=subdata, x="xx", y="yy", type="density-raster",
+          scatter=FALSE) -> p2
+
+p2
+
+```
+
+
+```{r}
+
+shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
+          num.sect=4, type="sectors", scatter=FALSE, result="result")+theme(legend.position = "bottom")->p3
+p3+p1
+
+```
+
+
+## Modelling
+
+
+## Conclusion & Future Research Directions

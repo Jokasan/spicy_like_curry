@@ -495,7 +495,9 @@ shotchart(data=subdata, x="xx", y="yy", type="density-raster",
           scatter=FALSE)-> p2
 
 shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
-          num.sect=5, type="sectors", scatter=FALSE, result="result") -> p3
+          num.sect=4, type="sectors", scatter=FALSE, result="result") -> p3
 
+
+# Do the above, but with false positives and false negatives.
 
 
