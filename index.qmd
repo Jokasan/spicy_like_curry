@@ -3,7 +3,7 @@ title: "Spicy Like Curry - To shoot or not to shoot?"
 author: "Nils Indreiten"
 format: 
   html:
-    theme: united
+    theme: pulse
     code-fold: true
     code-summary: "Show the code"
     toc: true
@@ -62,13 +62,12 @@ nba_player_box <- hoopR::load_nba_player_box(2022:hoopR::most_recent_nba_season(
 
 # NBA play by play data, 2022-2024 seasons:
 nba_pbp <- hoopR::load_nba_pbp(2022:hoopR::most_recent_nba_season())
-
 ```
 
 We now have three dataframes, each denoting different information, then `nba_team_box`
 dataframe is the most broad, followed by `nba_player_box` and `nba_pbp` which are more 
 granular. Next, using the `nba_player_box` dataframe as the starting point, we filter
-only for point guards and then aggregate the data to get a sense of the overall perfromance
+only for point guards and then aggregate the data to get a sense of the overall performance
 by player and team:
 
 ```{r}
@@ -119,7 +118,10 @@ pg_stats %>%
 
 The resulting data frame contains a summary of the player performance for the 
 2023 season, summarised by player & team. Let's wrap the dataframe in a reactive
-framework, so that you (the reader), can filter and slice the data as you wish:
+framework, so that you (the reader), can filter and slice the data as you wish, 
+where `AFG` refers to average field goals made, `3PAFG` refers to average three 
+point made, `AFT` refers to average free throws made, `AST` refers to average assists,
+`REB` refers to average rebounds, and `TPTS` refers to total points. :
 
 ```{r}
 #| message: false
@@ -267,6 +269,11 @@ div(
 div(nba_table)
 ```
 
+In terms of total points it looks like Stephen Curry comes in at 4th place, whilst
+Trae Young comes out on top. However, if we focus on the `3PAFG` metric, Curry 
+comes out on top. Let's hone in on the top 6 point guards in terms of 2-pointers,
+3-pointers, assists, rebounds and free throws made, scaling to accommodate the 
+different magnitudes of each metric:
 
 ```{r}
 pg_stats %>% 
@@ -290,13 +297,20 @@ attach(Pbox.PG)
 X <- data.frame(P2M, P3M, FTM, REB, AST)
 
 detach(Pbox.PG)
-radialprofile(data=X, title=Pbox.PG$Player, std=FALSE,ncol.arrange = 3,)
-
+radialprofile(data=X, title=Pbox.PG$Player, std=TRUE,ncol.arrange = 3)
 ```
 
+The first thing to note is that there are two entries for Kyrie Irving, one for 
+the Brooklyn Nets and one for the Dallas Mavericks. This is due to a transfer 
+sometime in the season, either way Irving's performance in the Nets is comparable to his 
+performance in Dallas, perhaps slightly better in Dallas at an overall level. Curry clearly 
+differentiates himself in terms of 3-pointers,relative to the other point guards. 
+Luka Doncic is more of a rebound and assist heavy point-guard, similarly Damian 
+Lillard overindexes in assists. Shai Gilgeous Alexander stands out in terms of 
+free throws made.  Lets look at the shot chart for Stephen Curry in the 2023 season
+excluding free throws, how many shots did he make and miss?
 
 ```{r}
-
 nba_pbp %>%  
   filter(season == 2023) %>% 
   select(coordinate_x,coordinate_y,coordinate_x_raw,coordinate_y_raw,scoring_play,score_value,
@@ -308,26 +322,70 @@ subdata <- curry_shots %>% as.data.frame()
 subdata$xx <- subdata$coordinate_x_raw-25
 subdata$yy <- subdata$coordinate_y_raw-44
 
-shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)->p1
-
-shotchart(data=subdata, x="xx", y="yy", type="density-raster",
-          scatter=FALSE) -> p2
-
-p2
-
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)+
+  theme(legend.position = "bottom")
 ```
 
+We see a concentration of field goals made near the board, as well as quite an evenly
+distribution of shots along the 3-point line. There also seems to be a higher concentration
+of misses along the 3-point line, suggesting that whilst Curry might be making the most three points 
+he is also missing a high number of 3-point shots. Let's look at the density of shots made using a 
+heatmap:
+
+```{r}
+#| warning: false
+shotchart(data=subdata, x="xx", y="yy", type="density-raster",scatter=FALSE)
+```
+
+This reveals a similar pattern, with a high density of shots made near the board
+and a large number of shots made along the top of the 3-point line. 
+
+## Modelling
+
+For this modelling exercise we will consider the play-by-play data and try to 
+predict the outcome of a play, excluding free throw plays for Stephen Curry, 
+we will need to do some data wrangling to retrieve some key information at the 
+play-by-play level, such as the opponent athlete name, game id and filtering 
+for all seasons equal to or less than 2023. These steps are outlined below:
 
 ```{r}
 
-shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
-          num.sect=4, type="sectors", scatter=FALSE, result="result")+theme(legend.position = "bottom")->p3
-p3+p1
+# Get the distinct set of player ids:
+nba_player_box %>%
+  select(athlete_id,athlete_display_name) %>% 
+  distinct() %>%
+  arrange(athlete_id)-> player_ids
 
+player_ids %>% 
+  group_by(athlete_id) %>%
+  mutate(row = row_number()) %>%
+  filter(row==1) %>% 
+  ungroup() %>% 
+  select(athlete_id,athlete_display_name) -> player_ids
+
+# Get Game IDs for the Golden State Warriors
+nba_team_box %>% 
+  filter(season <= 2023 & team_display_name == "Golden State Warriors") %>%
+  select(game_id,opponent_team_name) -> game_ids
+```
+
+```{r}
+nba_pbp %>%  
+  filter(season <= 2023 ) %>%  
+          # athlete_id_1 == 3975 & # remove this filter
+          # shooting_play == TRUE & # and this one
+          # !grepl("Free Throw",type_text)) %>% # exclude free throws
+  select(game_id,coordinate_x_raw,coordinate_y_raw,scoring_play,
+         clock_minutes, athlete_id_2,clock_minutes,clock_seconds,qtr) %>% 
+  left_join(player_ids,by=c("athlete_id_2"="athlete_id")) %>% 
+  inner_join(game_ids, by=join_by(game_id)) %>% 
+  select(-athlete_id_2) %>% 
+  rename(oponent_athlete=athlete_display_name) %>% 
+  mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
+         scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
 ```
 
 
-## Modelling
 
 
 ## Conclusion & Future Research Directions
