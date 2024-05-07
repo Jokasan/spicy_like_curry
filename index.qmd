@@ -121,7 +121,7 @@ The resulting data frame contains a summary of the player performance for the
 framework, so that you (the reader), can filter and slice the data as you wish, 
 where `AFG` refers to average field goals made, `3PAFG` refers to average three 
 point made, `AFT` refers to average free throws made, `AST` refers to average assists,
-`REB` refers to average rebounds, and `TPTS` refers to total points. :
+`REB` refers to average rebounds, and `TPTS` refers to total points:
 
 ```{r}
 #| message: false
@@ -313,8 +313,7 @@ excluding free throws, how many shots did he make and miss?
 ```{r}
 nba_pbp %>%  
   filter(season == 2023) %>% 
-  select(coordinate_x,coordinate_y,coordinate_x_raw,coordinate_y_raw,scoring_play,score_value,
-         shooting_play,clock_minutes) %>% 
+  select(coordinate_x_raw,coordinate_y_raw,scoring_play,clock_minutes) %>% 
   mutate(result=as.factor(if_else(scoring_play == TRUE, "made","missed")))-> curry_shots
 
 
@@ -343,10 +342,14 @@ and a large number of shots made along the top of the 3-point line.
 ## Modelling
 
 For this modelling exercise we will consider the play-by-play data and try to 
-predict the outcome of a play, excluding free throw plays for Stephen Curry, 
+predict the outcome of a play, excluding free throw plays for Stephen Curry. 
 we will need to do some data wrangling to retrieve some key information at the 
 play-by-play level, such as the opponent athlete name, game id and filtering 
 for all seasons equal to or less than 2023. These steps are outlined below:
+
+First we get a distinct list of players and game IDs for the Golden State 
+Warriors (Steph Curry's team), this will help up us match the opponent athlete
+and the respective play-by-play data:
 
 ```{r}
 
@@ -369,7 +372,31 @@ nba_team_box %>%
   select(game_id,opponent_team_name) -> game_ids
 ```
 
+Next, we will filter the play-by-play data for all seasons less than or equal to 
+2023 and match the opponent ids to the plays made by Stephen Curry. We will also
+account for whether the play has no direct opponent, the resulting dataframe
+is `base_staph_pbp`, which will be the foundation for modelling:
+
 ```{r}
+#| eval: false
+nba_pbp %>%  
+  filter(season <= 2023 &
+           athlete_id_1 == 3975 & # Filter Curry's plays
+           shooting_play == TRUE & # Make sure all are shooting plays
+           !grepl("Free Throw",type_text)) %>% # exclude free throws
+  select(game_id,coordinate_x_raw,coordinate_y_raw,scoring_play,
+         clock_minutes, athlete_id_2,clock_minutes,clock_seconds,qtr) %>% 
+  left_join(player_ids,by=c("athlete_id_2"="athlete_id")) %>% 
+  inner_join(game_ids, by=join_by(game_id)) %>% 
+  select(-athlete_id_2) %>% 
+  rename(oponent_athlete=athlete_display_name) %>% 
+  mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
+         scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
+base_steph_pbp
+```
+
+```{r}
+#| echo: false
 nba_pbp %>%  
   filter(season <= 2023 ) %>%  
           # athlete_id_1 == 3975 & # remove this filter
@@ -383,8 +410,20 @@ nba_pbp %>%
   rename(oponent_athlete=athlete_display_name) %>% 
   mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
          scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
+base_steph_pbp
 ```
 
+With our base dataframe, we can now create the training, testing and cross-validation
+folds:
+
+```{r}
+set.seed(123)
+steph_split <- initial_split(base_steph_pbp, prop = 0.8, strata = scoring_play)
+steph_train <- training(steph_split)
+steph_test <- testing(steph_split)
+
+steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
+```
 
 
 
