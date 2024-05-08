@@ -425,6 +425,30 @@ steph_test <- testing(steph_split)
 steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
 ```
 
+The next step is to create a recipe for the model, we do this below,
+with the game_id variable as the ID variable and one hot encoding for all
+the nominal variables. The dependent variable is `scoring_play`, which will 
+be a function of Curry's position on the court (coordinate_x_raw, coordinate_y_raw),
+the opponent athlete, the quarter, the minutes and seconds left on the clock:
+
+
+```{r}
+steph_recipe <- recipe(scoring_play ~ ., data = steph_train) %>%
+  update_role(game_id, new_role = "ID") %>%
+  step_novel(all_nominal(), -all_outcomes()) %>%
+  step_dummy(all_nominal(), -all_outcomes()) 
+
+```
+
+In addition to creating dummy variables for the nominal variables, we will also
+account for the uniqueness of the play. That is, because there is an element 
+of randomness in a basketball game, some of the players Curry's has been up 
+against may not be in the test set or vice versa. To account for this, we will 
+use `step_novel`.
+
+
 
 
 ## Conclusion & Future Research Directions
+
+
