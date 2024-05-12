@@ -139,6 +139,20 @@ div(bscols(
        minutes_filter))
 )
 
+library(shiny)
+
+# display crosstalk filters
+div(
+  fluidRow(
+    column(4, team_filter),
+    column(4, conference_filter),
+    column(4, minutes_filter)
+  )
+)
+
+# display table
+div(nba_table)
+
 ### display table
 div(nba_table)
 

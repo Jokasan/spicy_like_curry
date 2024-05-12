@@ -121,7 +121,7 @@ The resulting data frame contains a summary of the player performance for the
 framework, so that you (the reader), can filter and slice the data as you wish, 
 where `AFG` refers to average field goals made, `3PAFG` refers to average three 
 point made, `AFT` refers to average free throws made, `AST` refers to average assists,
-`REB` refers to average rebounds, and `TPTS` refers to total points. :
+`REB` refers to average rebounds, and `TPTS` refers to total points:
 
 ```{r}
 #| message: false
@@ -342,12 +342,14 @@ and a large number of shots made along the top of the 3-point line.
 ## Modelling
 
 For this modelling exercise we will consider the play-by-play data and try to 
-predict the outcome of a play, excluding free throw plays for Stephen Curry, 
+predict the outcome of a play, excluding free throw plays for Stephen Curry. 
 we will need to do some data wrangling to retrieve some key information at the 
 play-by-play level, such as the opponent athlete name, game id and filtering 
 for all seasons equal to or less than 2023. These steps are outlined below:
 
-First, we retrieve the unique player ids and game ids for the Golden State Warriors:
+First we get a distinct list of players and game IDs for the Golden State 
+Warriors (Steph Curry's team), this will help up us match the opponent athlete
+and the respective play-by-play data:
 
 ```{r}
 # Get the distinct set of player ids:
@@ -391,7 +393,7 @@ nba_pbp %>%
 
 
 ```{r}
-#| echo: FALSE
+#| echo: false
 
 nba_pbp %>%  
   filter(season <= 2023 ) %>%  
@@ -406,6 +408,19 @@ nba_pbp %>%
   rename(oponent_athlete=athlete_display_name) %>% 
   mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
          scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
+base_steph_pbp
+```
+
+With our base dataframe, we can now create the training, testing and cross-validation
+folds:
+
+```{r}
+set.seed(123)
+steph_split <- initial_split(base_steph_pbp, prop = 0.8, strata = scoring_play)
+steph_train <- training(steph_split)
+steph_test <- testing(steph_split)
+
+steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
 ```
 
 With the base data in place, we are now able to create the splits for training and testing
@@ -422,11 +437,27 @@ steph_test <- testing(steph_split)
 steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
 ```
 
-Next, we specify the recipe
+The next step is to create a recipe for the model, we do this below,
+with the game_id variable as the ID variable and one hot encoding for all
+the nominal variables. The dependent variable is `scoring_play`, which will 
+be a function of Curry's position on the court (coordinate_x_raw, coordinate_y_raw),
+the opponent athlete, the quarter, the minutes and seconds left on the clock:
+
+
+```{r}
+steph_recipe <- recipe(scoring_play ~ ., data = steph_train) %>%
+  update_role(game_id, new_role = "ID") %>%
+  step_novel(all_nominal(), -all_outcomes()) %>%
+  step_dummy(all_nominal(), -all_outcomes()) 
+
+```
+
+In addition to creating dummy variables for the nominal variables, we will also
+account for the uniqueness of the play. That is, because there is an element 
+of randomness in a basketball game, some of the players Curry's has been up 
+against may not be in the test set or vice versa. To account for this, we will 
+use `step_novel`.
 
 ## Conclusion & Future Research Directions
-
-
-
 
 
