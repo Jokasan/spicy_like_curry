@@ -365,7 +365,7 @@ xgb_results %>%
                names_to = "parameter"
   ) %>%
   ggplot(aes(value, mean)) +
-  geom_point(alpha = 0.8, show.legend = FALSE, color="midnightblue") +
+  geom_point(alpha = 0.8, show.legend = FALSE, color="indianred") +
   facet_wrap(~parameter, scales = "free_x") +
   labs(x = NULL, y = "AUC")+
   scale_color_brewer(palette = "Spectral")+
@@ -428,10 +428,7 @@ https://www.tidymodels.org/start/recipes/
   
   
   nba_pbp %>%  
-  filter(season == 2024 & 
-           athlete_id_1 == 3975 &
-           shooting_play == TRUE &
-           !grepl("Free Throw",type_text)) %>% 
+  filter(season == 2024) %>% 
   select(game_id,coordinate_x_raw,coordinate_y_raw,scoring_play,
          clock_minutes, athlete_id_2,clock_minutes,clock_seconds,qtr) %>% 
   left_join(player_ids,by=c("athlete_id_2"="athlete_id")) %>% 
@@ -497,7 +494,43 @@ shotchart(data=subdata, x="xx", y="yy", type="density-raster",
 shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
           num.sect=4, type="sectors", scatter=FALSE, result="result") -> p3
 
-
 # Do the above, but with false positives and false negatives.
+
+steph_preds_2024 %>% 
+  select(coordinate_x_raw,coordinate_y_raw,scoring_play,.pred_class,clock_minutes) %>%
+  mutate(result=as.factor(if_else(scoring_play == TRUE,"made","missed"))) %>% 
+  mutate(result2 = as.factor(case_when(
+    scoring_play == TRUE & .pred_class == FALSE ~ "false negative",
+    scoring_play == FALSE & .pred_class == TRUE ~ "false positive",.default = "Truth"))) %>% 
+  filter(result2 != "Truth") %>% 
+  select(-result) %>% 
+  rename(result=result2) -> curry_shots_2024
+
+
+subdata <- curry_shots_2024 %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
+
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)
+
+
+steph_preds_2024 %>% 
+  select(coordinate_x_raw,coordinate_y_raw,scoring_play,.pred_class,clock_minutes) %>%
+  mutate(result=as.factor(if_else(scoring_play == TRUE,"made","missed"))) %>% 
+  mutate(result2 = as.factor(case_when(
+    scoring_play == TRUE & .pred_class == FALSE ~ "false negative",
+    scoring_play == FALSE & .pred_class == TRUE ~ "false positive",.default = "Truth"))) %>% 
+  filter(result2 == "Truth") %>% 
+  select(-result) %>% 
+  rename(result=result2) -> curry_shots_2024
+
+
+subdata <- curry_shots_2024 %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
+
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)
+
+
 
 

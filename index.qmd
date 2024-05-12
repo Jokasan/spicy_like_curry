@@ -14,7 +14,7 @@ format:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-pacman::p_load(BasketballAnalyzeR,tidyverse,zoo,gt,hoopR,patchwork,tidymodels,reactablefmtr,htmltools,crosstalk,patchwork,shiny)
+pacman::p_load(BasketballAnalyzeR,tidyverse,zoo,gt,hoopR,patchwork,tidymodels,reactablefmtr,htmltools,crosstalk,patchwork,shiny,vip)
 
 team_logos <- readr::read_csv("Logo_info.csv") %>% 
   select(TEAM_LOGO,TEAM_NAME,CONFERENCE) %>% 
@@ -313,8 +313,7 @@ excluding free throws, how many shots did he make and miss?
 ```{r}
 nba_pbp %>%  
   filter(season == 2023) %>% 
-  select(coordinate_x,coordinate_y,coordinate_x_raw,coordinate_y_raw,scoring_play,score_value,
-         shooting_play,clock_minutes) %>% 
+  select(coordinate_x_raw,coordinate_y_raw,scoring_play,clock_minutes) %>% 
   mutate(result=as.factor(if_else(scoring_play == TRUE, "made","missed")))-> curry_shots
 
 
@@ -348,8 +347,9 @@ we will need to do some data wrangling to retrieve some key information at the
 play-by-play level, such as the opponent athlete name, game id and filtering 
 for all seasons equal to or less than 2023. These steps are outlined below:
 
-```{r}
+First, we retrieve the unique player ids and game ids for the Golden State Warriors:
 
+```{r}
 # Get the distinct set of player ids:
 nba_player_box %>%
   select(athlete_id,athlete_display_name) %>% 
@@ -369,7 +369,30 @@ nba_team_box %>%
   select(game_id,opponent_team_name) -> game_ids
 ```
 
+Second, we  combine the `player_ids` and `game_ids` dataframes with the play-by-play
+data, giving us the base data for the modelling:
+
 ```{r}
+#| eval: FALSE
+nba_pbp %>%  
+  filter(season <= 2023, 
+           athlete_id_1 == 3975 & # Filter for Curry
+           shooting_play == TRUE & # And only shooting plays
+           !grepl("Free Throw",type_text)) %>% # exclude free throws
+  select(game_id,coordinate_x_raw,coordinate_y_raw,scoring_play,
+         clock_minutes, athlete_id_2,clock_minutes,clock_seconds,qtr) %>% 
+  left_join(player_ids,by=c("athlete_id_2"="athlete_id")) %>% 
+  inner_join(game_ids, by=join_by(game_id)) %>% 
+  select(-athlete_id_2) %>% 
+  rename(oponent_athlete=athlete_display_name) %>% 
+  mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
+         scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
+```
+
+
+```{r}
+#| echo: FALSE
+
 nba_pbp %>%  
   filter(season <= 2023 ) %>%  
           # athlete_id_1 == 3975 & # remove this filter
@@ -385,7 +408,25 @@ nba_pbp %>%
          scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
 ```
 
+With the base data in place, we are now able to create the splits for training and testing
+the model. We will use a 80/20 split for training and testing, and a 10-fold cross validation
+splits:
 
+```{r}
+# Create splits:
+set.seed(123)
+steph_split <- initial_split(base_steph_pbp, prop = 0.8, strata = scoring_play)
+steph_train <- training(steph_split)
+steph_test <- testing(steph_split)
 
+steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
+```
+
+Next, we specify the recipe
 
 ## Conclusion & Future Research Directions
+
+
+
+
+
