@@ -443,10 +443,9 @@ the nominal variables. The dependent variable is `scoring_play`, which will
 be a function of Curry's position on the court (coordinate_x_raw, coordinate_y_raw),
 the opponent athlete, the quarter, the minutes and seconds left on the clock:
 
-
 ```{r}
 steph_recipe <- recipe(scoring_play ~ ., data = steph_train) %>%
-  update_role(game_id, new_role = "ID") %>%
+  update_role(game_id, new_role = "ID") %>% # Add ID step, for game level info
   step_novel(all_nominal(), -all_outcomes()) %>%
   step_dummy(all_nominal(), -all_outcomes()) 
 
@@ -456,7 +455,52 @@ In addition to creating dummy variables for the nominal variables, we will also
 account for the uniqueness of the play. That is, because there is an element 
 of randomness in a basketball game, some of the players Curry's has been up 
 against may not be in the test set or vice versa. To account for this, we will 
-use `step_novel`.
+use `step_novel`. Now that we have the recipe, we can create the model workflow:
+
+```{r}
+#| eval: false
+
+# Model spec:
+xgb_spec <- boost_tree(
+  trees = 5000,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = tune(),
+  sample_size = tune(),
+  mtry = tune(),
+  learn_rate = tune()
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+
+# Model workflow:
+steph_workflow <- workflow() %>%
+  add_recipe(steph_recipe) %>%
+  add_model(xgb_spec)
+
+# Tuning grid:
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), steph_train),
+  learn_rate(),
+  size = 30
+)
+
+doParallel::registerDoParallel() # Activate parallel computing
+set.seed(1234)
+
+# Results of the tuning:
+xgb_results <-  tune_grid(
+  steph_workflow,
+  resamples = steph_folds,
+  grid = xgb_grid,
+  control = control_grid(save_pred = TRUE)
+)
+```
+
 
 ## Conclusion & Future Research Directions
 
