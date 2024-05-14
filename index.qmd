@@ -709,20 +709,13 @@ not terrible either.
 ## Conclusion & Future Research Directions
 
 This project explores point guard trends in the NBA from season 2022 to 2024. It
-begins by visualising and aggregatin 
+begins by visualising and aggregating key stats by player for the 2023 season. Next,
+we honed in on the top 6 point guards in the league, comparing their key stats, where
+Curry clearly stood out in terms of 3-pointers. We then refocused on Curry's play 
+by play data, given that was the original starting point of the project. Curry's 
+shot was overlayed onto the basketball court unveiling patterns in his shots. 
 
-
-
-
-
-
-
-
-
-
-
-
-
+The second part of the project 
 
 
 
