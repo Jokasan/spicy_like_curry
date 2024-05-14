@@ -396,6 +396,11 @@ augment(fit_steph,steph_test)%>%
   roc_curve(truth = scoring_play, .pred_TRUE) %>% 
   autoplot()
 
+augment(fit_steph,steph_test)%>% 
+  roc_curve(truth = scoring_play, .pred_TRUE) %>% 
+  autoplot()
+
+
 final_res %>%
   collect_predictions() %>%
   roc_curve(scoring_play, `.pred_TRUE`) %>%

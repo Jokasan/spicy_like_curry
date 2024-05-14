@@ -22,6 +22,10 @@ team_logos <- readr::read_csv("Logo_info.csv") %>%
  rbind(c("https://upload.wikimedia.org/wikipedia/en/thumb/2/21/Portland_Trail_Blazers_logo.svg/2560px-Portland_Trail_Blazers_logo.svg.png","Portland Trail Blazers", "Western")) %>% 
   mutate(TEAM_NAME=if_else(TEAM_NAME == "Los Angeles Clippers","LA Clippers",TEAM_NAME)) 
 
+final_res <- readRDS("~/Documents/R/spicy_like_curry/final_res.rds")
+final_xgb <- readRDS("~/Documents/R/spicy_like_curry/final_xgb.rds")
+xgb_results <- readRDS("~/Documents/R/spicy_like_curry/xgb_results.rds")
+
 nba_team_box <- read_csv("nba_team_box.csv")
 nba_player_box <- read_csv("nba_player_box.csv")
 nba_pbp <- read_csv("nba_pbp.csv")
@@ -271,7 +275,7 @@ div(nba_table)
 
 In terms of total points it looks like Stephen Curry comes in at 4th place, whilst
 Trae Young comes out on top. However, if we focus on the `3PAFG` metric, Curry 
-comes out on top. Let's hone in on the top 6 point guards in terms of 2-pointers,
+comes out on top. Let's hone in on the top 6 point guards in terms of 2-pointers, 
 3-pointers, assists, rebounds and free throws made, scaling to accommodate the 
 different magnitudes of each metric:
 
@@ -304,7 +308,7 @@ The first thing to note is that there are two entries for Kyrie Irving, one for
 the Brooklyn Nets and one for the Dallas Mavericks. This is due to a transfer 
 sometime in the season, either way Irving's performance in the Nets is comparable to his 
 performance in Dallas, perhaps slightly better in Dallas at an overall level. Curry clearly 
-differentiates himself in terms of 3-pointers,relative to the other point guards. 
+differentiates himself in terms of 3-pointers, relative to the other point guards. 
 Luka Doncic is more of a rebound and assist heavy point-guard, similarly Damian 
 Lillard overindexes in assists. Shai Gilgeous Alexander stands out in terms of 
 free throws made.  Lets look at the shot chart for Stephen Curry in the 2023 season
@@ -458,6 +462,29 @@ against may not be in the test set or vice versa. To account for this, we will
 use `step_novel`. Now that we have the recipe, we can create the model workflow:
 
 ```{r}
+#| echo: FALSE
+
+# Model spec:
+xgb_spec <- boost_tree(
+  trees = 5000,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = tune(),
+  sample_size = tune(),
+  mtry = tune(),
+  learn_rate = tune()
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+
+# Model workflow:
+steph_workflow <- workflow() %>%
+  add_recipe(steph_recipe) %>%
+  add_model(xgb_spec)
+```
+
+
+```{r}
 #| eval: false
 
 # Model spec:
@@ -501,7 +528,202 @@ xgb_results <-  tune_grid(
 )
 ```
 
+Let's take a look at the fluctuation in terms of performance according 
+to the model parameters:
+
+```{r}
+xgb_results %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  select(mean, mtry:sample_size) %>%
+  pivot_longer(mtry:sample_size,
+               values_to = "value",
+               names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean)) +
+  geom_point(alpha = 0.8, show.legend = FALSE, color="indianred") +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "AUC")+
+  scale_color_brewer(palette = "Spectral")+
+  theme_minimal()
+```
+
+It looks like the AUC metric is stabilising at around 0.75-0.80. With these
+results in mind we finalise the workflow and perform the last fit:
+
+```{r}
+
+# Select best model and finalise workflow:
+
+best_auc_model <- select_best(xgb_results,"roc_auc")
+
+final_xgb <- finalize_workflow(
+  steph_workflow,
+  best_auc_model)
+
+final_xgb %>%
+  fit(data = steph_train) %>%
+  extract_fit_parsnip() %>%
+  vip(geom = "point") +
+  theme_minimal()
+
+final_res <- last_fit(final_xgb, steph_split)
+```
+
+The variable with the largest influence on whether Curry will score or not, is 
+whether there is a direct opponent or not, i.e. there is a much higher likelihood
+that the shot will go in if Curry is not against a specific opponent. The next two
+most important variables are coordinate_x_raw and coordinate_y_raw, which denote
+the position on the field. We can also plot the area under the curve and confusion
+matrix:
+
+```{r}
+final_xgb %>%
+  fit(data = steph_train) -> fit_steph
+
+augment(fit_steph,steph_test)%>% 
+  roc_curve(truth = scoring_play, .pred_TRUE) %>% 
+  autoplot()
+```
+
+The model has a area under the curve of 0.78 and an accuracy of 0.73, the confusion
+matrix is displayed below:
+
+```{r}
+collect_predictions(final_res) %>%
+  conf_mat(scoring_play, .pred_class) %>%
+  autoplot()+
+  theme_minimal()
+```
+
+It looks like the model is better at predicting shots that don't go in, whereas
+its accuracy is less clear cut when it comes to shots that actually went in. 
+
+### Previously unseen data - 2024 NBA season
+
+Up until now we have trained the model from the 2022 season up until the 2023 
+season. Let's get the 2024 season data and make our predictions on that, to 
+see how the model would perform with unseen data:
+
+```{r}
+# Get the data for the new season:
+# So we filtered the data for the Golden State Warriors:
+
+# NBA Team box data:
+nba_team_box %>% 
+  filter(season == 2024 & team_display_name == "Golden State Warriors") %>%
+  select(game_id,opponent_team_name) -> game_ids
+  
+# NBA play-by-play data:  
+nba_pbp %>%  
+  filter(season == 2024) %>% 
+  select(game_id,coordinate_x_raw,coordinate_y_raw,scoring_play,
+         clock_minutes, athlete_id_2,clock_minutes,clock_seconds,qtr) %>% 
+  left_join(player_ids,by=c("athlete_id_2"="athlete_id")) %>% 
+  inner_join(game_ids, by=join_by(game_id)) %>% 
+  select(-athlete_id_2) %>% 
+  rename(oponent_athlete=athlete_display_name) %>% 
+  mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
+         scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp_2024
+```
+
+Now we have Curry's 2024 season play-by-play data. Before predicting on the 2024
+data, we fit the model to the whole training data:
+
+
+```{r}
+
+# Fit the model to the whole data: 
+
+final_xgb %>%
+    fit(data = base_steph_pbp) -> fit_steph
+
+augment(fit_steph, base_steph_pbp_2024) %>%
+  roc_auc(truth = scoring_play, .pred_TRUE)
+
+# Assign to predictions to an object:
+
+augment(fit_steph, base_steph_pbp_2024) -> steph_preds_2024
+```
+
+The model gives us an area under the curve of 80%. We can also break down the 
+predictions according to specific sections of the basketball court and also 
+overlay the time on the clock when the shot was made:
+
+```{r}
+
+# Plot the results:
+
+steph_preds_2024 %>% 
+  select(coordinate_x_raw,coordinate_y_raw,scoring_play,clock_minutes,.pred_class) %>%
+  mutate(result=as.factor(if_else(.pred_class == TRUE,"made","missed")))->curry_shots_2024
+
+subdata <- curry_shots_2024 %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
+
+shotchart(data=subdata, x="xx", y="yy", z="clock_minutes", 
+          num.sect=4, type="sectors", scatter=FALSE, result="result")+
+  theme(legend.position = "bottom")+
+  guides(fill = guide_legend(title = "Clock Minutes",title.position = "top",title.hjust = 0.5))
+```
+
+According to the model predictions, Curry is more likely to score when he is near
+the basket. Similarly, the model predicts that somewhere between 40-50% of shots 
+from the bottom left and right corners of the court will go in. 
+
+Let's take a look at the model results, specifically focusing on false negatives and 
+positives:
+
+```{r}
+
+# Plot the results:
+
+steph_preds_2024 %>% 
+  select(coordinate_x_raw,coordinate_y_raw,scoring_play,.pred_class,clock_minutes) %>%
+  mutate(result=as.factor(if_else(scoring_play == TRUE,"made","missed"))) %>% 
+  mutate(result2 = as.factor(case_when(
+    scoring_play == TRUE & .pred_class == FALSE ~ "false negative",
+    scoring_play == FALSE & .pred_class == TRUE ~ "false positive",.default = "Truth"))) %>% 
+  filter(result2 != "Truth") %>% 
+  select(-result) %>% 
+  rename(result=result2) -> curry_shots_2024
+
+
+subdata <- curry_shots_2024 %>% as.data.frame()
+subdata$xx <- subdata$coordinate_x_raw-25
+subdata$yy <- subdata$coordinate_y_raw-44
+
+shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)+
+  theme(legend.position = "bottom")
+```
+
+It looks like the model predicts more false negatives for three pointers, i.e. 
+along the three point line, as shown by the red points. In contrast, for false 
+positives the concentration is mostly around the backboard, there is also a 
+concentration of false negatives slightly to the right of the backboard, 
+however for the most part it seems there are more false positives around that area. 
+In terms of accuracy, the model achieves 75% accuracy, which is not great, but 
+not terrible either.
 
 ## Conclusion & Future Research Directions
+
+This project explores point guard trends in the NBA from season 2022 to 2024. It
+begins by visualising and aggregatin 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
