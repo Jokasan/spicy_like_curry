@@ -3,7 +3,7 @@ title: "Spicy Like Curry - To shoot or not to shoot?"
 author: "Nils Indreiten"
 format: 
   html:
-    theme: pulse
+    theme: litera
     code-fold: true
     code-summary: "Show the code"
     toc: true
@@ -31,29 +31,15 @@ nba_player_box <- read_csv("nba_player_box.csv")
 nba_pbp <- read_csv("nba_pbp.csv")
 ```
 
-The idea for this project came from a conversation with a friend, we were discussing
-whether it is possible to predict whether a basketball player will make a shot or not. 
-In specific, the question was whether _Stephen Curry_ would make a shot.
-This project aims to predict whether Stephen Curry will make a shot 
-at a play-by-play level, based on a variety of features. 
+The idea for this project came from a conversation with a friend, we were discussing whether it is possible to predict whether a basketball player will make a shot or not. In specific, the question was whether *Stephen Curry* would make a shot given he attempts one. This project aims to predict whether Stephen Curry will make a shot at a play-by-play level, based on a variety of features.
 
-The project is structured as follows: First general trends in the NBA
-are explored, honing in on the point guard position, which is Curry's
-position. Then a few key features are selected and an XGBoost classifier
-is trained and tested. The model performance is then evaluated in unseen
-data, season 2024. The model was trained and tested on data from the 2022 
-and 2023 seasons. Finally, the findings are concluded and future research 
-directions are suggested.
+The project is structured as follows: First general trends in the NBA are explored, honing in on the point guard position, which is Curry's position. Then a few key features are selected and an XGBoost classifier is trained and tested. The model performance is then evaluated in unseen data, season 2024. The model was trained and tested on data from the 2022 and 2023 seasons. Finally, the findings are concluded and future research directions are suggested.
 
 ## Exploratory Data Analysis & Data Wrangling
 
 ### Data Collection
 
-Since Stephen Curry is a point guard, let's focus on the trends for that 
-position. First, let's take a look at the overall stats for all point 
-guards in the NBA. The _hoopR_ package let's users retrieve NBA data at different
-levels of granularity, for this we need data at all levels of aggregations, therefore
-we retrieve team box, player box, and play by play data:
+Since Stephen Curry is a point guard, let's focus on the trends for that position. First, let's take a look at the overall stats for all point guards in the NBA. The *hoopR* package let's users retrieve NBA data at different levels of granularity, for this we need data at all levels of aggregations, therefore we retrieve team box, player box, and play by play data:
 
 ```{r}
 #| eval: false
@@ -68,11 +54,7 @@ nba_player_box <- hoopR::load_nba_player_box(2022:hoopR::most_recent_nba_season(
 nba_pbp <- hoopR::load_nba_pbp(2022:hoopR::most_recent_nba_season())
 ```
 
-We now have three dataframes, each denoting different information, then `nba_team_box`
-dataframe is the most broad, followed by `nba_player_box` and `nba_pbp` which are more 
-granular. Next, using the `nba_player_box` dataframe as the starting point, we filter
-only for point guards and then aggregate the data to get a sense of the overall performance
-by player and team:
+We now have three dataframes, each denoting different information, then `nba_team_box` dataframe is the most broad, followed by `nba_player_box` and `nba_pbp` which are more granular. Next, using the `nba_player_box` dataframe as the starting point, we filter only for point guards and then aggregate the data to get a sense of the overall performance by player and team:
 
 ```{r}
 #| message: false
@@ -120,12 +102,7 @@ pg_stats %>%
   head(5) 
 ```
 
-The resulting data frame contains a summary of the player performance for the 
-2023 season, summarised by player & team. Let's wrap the dataframe in a reactive
-framework, so that you (the reader), can filter and slice the data as you wish, 
-where `AFG` refers to average field goals made, `3PAFG` refers to average three 
-point made, `AFT` refers to average free throws made, `AST` refers to average assists,
-`REB` refers to average rebounds, and `TPTS` refers to total points:
+The resulting data frame contains a summary of the player performance for the 2023 season, summarised by player & team. Let's wrap the dataframe in a reactive framework, so that you (the reader), can filter and slice the data as you wish, where `AFG` refers to average field goals made, `3PAFG` refers to average three point made, `AFT` refers to average free throws made, `AST` refers to average assists, `REB` refers to average rebounds, and `TPTS` refers to total points:
 
 ```{r}
 #| message: false
@@ -273,14 +250,10 @@ div(
 div(nba_table)
 ```
 
-In terms of total points it looks like Stephen Curry comes in at 4th place, whilst
-Trae Young comes out on top. However, if we focus on the `3PAFG` metric, Curry 
-comes out on top. Let's hone in on the top 6 point guards in terms of 2-pointers, 
-3-pointers, assists, rebounds and free throws made, scaling to accommodate the 
-different magnitudes of each metric:
+In terms of total points it looks like Stephen Curry comes in at 4th place, whilst Trae Young comes out on top. However, if we focus on the `3PAFG` metric, Curry comes out on top. Let's hone in on the top 6 point guards in terms of 2-pointers, 3-pointers, assists, rebounds and free throws made, scaling to accommodate the different magnitudes of each metric:
 
 ```{r}
-pg_stats %>% 
+pg_stats %>%
   select(team_name,athlete_display_name,field_goals_made,three_point_field_goals_made,free_throws_made,rebounds,assists) %>%
   rename(
     Team = team_name,
@@ -304,15 +277,7 @@ detach(Pbox.PG)
 radialprofile(data=X, title=Pbox.PG$Player, std=TRUE,ncol.arrange = 3)
 ```
 
-The first thing to note is that there are two entries for Kyrie Irving, one for 
-the Brooklyn Nets and one for the Dallas Mavericks. This is due to a transfer 
-sometime in the season, either way Irving's performance in the Nets is comparable to his 
-performance in Dallas, perhaps slightly better in Dallas at an overall level. Curry clearly 
-differentiates himself in terms of 3-pointers, relative to the other point guards. 
-Luka Doncic is more of a rebound and assist heavy point-guard, similarly Damian 
-Lillard overindexes in assists. Shai Gilgeous Alexander stands out in terms of 
-free throws made.  Lets look at the shot chart for Stephen Curry in the 2023 season
-excluding free throws, how many shots did he make and miss?
+The first thing to note is that there are two entries for Kyrie Irving, one for the Brooklyn Nets and one for the Dallas Mavericks. This is due to a transfer sometime in the season, either way Irving's performance in the Nets is comparable to his performance in Dallas, perhaps slightly better in Dallas at an overall level. Curry clearly differentiates himself in terms of 3-pointers, relative to the other point guards. Luka Doncic is more of a rebound and assist heavy point-guard, similarly Damian Lillard over indexes on assists. Shai Gilgeous Alexander stands out in terms of free throws made. Lets look at the shot chart for Stephen Curry in the 2023 season excluding free throws, how many shots did he make and miss?
 
 ```{r}
 nba_pbp %>%  
@@ -329,31 +294,20 @@ shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)+
   theme(legend.position = "bottom")
 ```
 
-We see a concentration of field goals made near the board, as well as quite an evenly
-distribution of shots along the 3-point line. There also seems to be a higher concentration
-of misses along the 3-point line, suggesting that whilst Curry might be making the most three points 
-he is also missing a high number of 3-point shots. Let's look at the density of shots made using a 
-heatmap:
+We see a concentration of field goals made near the board, as well as quite an evenly distribution of shots along the 3-point line. There also seems to be a higher concentration of misses along the 3-point line, suggesting that whilst Curry might be making the most three points he is also missing a high number of 3-point shots. Let's look at the density of shots made using a heatmap:
 
 ```{r}
 #| warning: false
 shotchart(data=subdata, x="xx", y="yy", type="density-raster",scatter=FALSE)
 ```
 
-This reveals a similar pattern, with a high density of shots made near the board
-and a large number of shots made along the top of the 3-point line. 
+This reveals a similar pattern, with a high density of shots made near the board and a large number of shots made along the top of the 3-point line.
 
 ## Modelling
 
-For this modelling exercise we will consider the play-by-play data and try to 
-predict the outcome of a play, excluding free throw plays for Stephen Curry. 
-we will need to do some data wrangling to retrieve some key information at the 
-play-by-play level, such as the opponent athlete name, game id and filtering 
-for all seasons equal to or less than 2023. These steps are outlined below:
+For this modelling exercise we will consider the play-by-play data and try to predict the outcome of a play, excluding free throw plays for Stephen Curry. we will need to do some data wrangling to retrieve some key information at the play-by-play level, such as the opponent athlete name, game id and filtering for all seasons equal to or less than 2023. These steps are outlined below:
 
-First we get a distinct list of players and game IDs for the Golden State 
-Warriors (Steph Curry's team), this will help up us match the opponent athlete
-and the respective play-by-play data:
+First we get a distinct list of players and game IDs for the Golden State Warriors (Steph Curry's team), this will help up us match the opponent athlete and the respective play-by-play data:
 
 ```{r}
 # Get the distinct set of player ids:
@@ -375,8 +329,7 @@ nba_team_box %>%
   select(game_id,opponent_team_name) -> game_ids
 ```
 
-Second, we  combine the `player_ids` and `game_ids` dataframes with the play-by-play
-data, giving us the base data for the modelling:
+Second, we combine the `player_ids` and `game_ids` dataframes with the play-by-play data, giving us the base data for the modelling:
 
 ```{r}
 #| eval: FALSE
@@ -394,7 +347,6 @@ nba_pbp %>%
   mutate(oponent_athlete = if_else(is.na(oponent_athlete),"no direct oponent",oponent_athlete),
          scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp
 ```
-
 
 ```{r}
 #| echo: false
@@ -415,8 +367,7 @@ nba_pbp %>%
 base_steph_pbp
 ```
 
-With our base dataframe, we can now create the training, testing and cross-validation
-folds:
+With our base dataframe, we can now create the training, testing and cross-validation folds:
 
 ```{r}
 set.seed(123)
@@ -427,9 +378,7 @@ steph_test <- testing(steph_split)
 steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
 ```
 
-With the base data in place, we are now able to create the splits for training and testing
-the model. We will use a 80/20 split for training and testing, and a 10-fold cross validation
-splits:
+With the base data in place, we are now able to create the splits for training and testing the model. We will use a 80/20 split for training and testing, and a 10-fold cross validation splits:
 
 ```{r}
 # Create splits:
@@ -441,11 +390,7 @@ steph_test <- testing(steph_split)
 steph_folds <- vfold_cv(steph_train, v = 10, strata = scoring_play)
 ```
 
-The next step is to create a recipe for the model, we do this below,
-with the game_id variable as the ID variable and one hot encoding for all
-the nominal variables. The dependent variable is `scoring_play`, which will 
-be a function of Curry's position on the court (coordinate_x_raw, coordinate_y_raw),
-the opponent athlete, the quarter, the minutes and seconds left on the clock:
+The next step is to create a recipe for the model, we do this below, with the game_id variable as the ID variable and one hot encoding for all the nominal variables. The dependent variable is `scoring_play`, which will be a function of Curry's position on the court (coordinate_x_raw, coordinate_y_raw), the opponent athlete, the quarter, the minutes and seconds left on the clock:
 
 ```{r}
 steph_recipe <- recipe(scoring_play ~ ., data = steph_train) %>%
@@ -455,11 +400,7 @@ steph_recipe <- recipe(scoring_play ~ ., data = steph_train) %>%
 
 ```
 
-In addition to creating dummy variables for the nominal variables, we will also
-account for the uniqueness of the play. That is, because there is an element 
-of randomness in a basketball game, some of the players Curry's has been up 
-against may not be in the test set or vice versa. To account for this, we will 
-use `step_novel`. Now that we have the recipe, we can create the model workflow:
+In addition to creating dummy variables for the nominal variables, we will also account for the uniqueness of the play. That is, because there is an element of randomness in a basketball game, some of the players Curry's has been up against may not be in the test set or vice versa. To account for this, we will use `step_novel`. Now that we have the recipe, we can create the model workflow:
 
 ```{r}
 #| echo: FALSE
@@ -482,7 +423,6 @@ steph_workflow <- workflow() %>%
   add_recipe(steph_recipe) %>%
   add_model(xgb_spec)
 ```
-
 
 ```{r}
 #| eval: false
@@ -528,8 +468,7 @@ xgb_results <-  tune_grid(
 )
 ```
 
-Let's take a look at the fluctuation in terms of performance according 
-to the model parameters:
+Let's take a look at the fluctuation in terms of performance according to the model parameters:
 
 ```{r}
 xgb_results %>%
@@ -548,8 +487,7 @@ xgb_results %>%
   theme_minimal()
 ```
 
-It looks like the AUC metric is stabilising at around 0.75-0.80. With these
-results in mind we finalise the workflow and perform the last fit:
+It looks like the AUC metric is stabilising at around 0.75-0.80. With these results in mind we finalise the workflow and perform the last fit:
 
 ```{r}
 
@@ -570,12 +508,7 @@ final_xgb %>%
 final_res <- last_fit(final_xgb, steph_split)
 ```
 
-The variable with the largest influence on whether Curry will score or not, is 
-whether there is a direct opponent or not, i.e. there is a much higher likelihood
-that the shot will go in if Curry is not against a specific opponent. The next two
-most important variables are coordinate_x_raw and coordinate_y_raw, which denote
-the position on the field. We can also plot the area under the curve and confusion
-matrix:
+The variable with the largest influence on whether Curry will score, is whether there is a direct opponent or not, i.e. there is a much higher likelihood that the shot will go in if Curry is not against a specific opponent. The next two most important variables are coordinate_x_raw and coordinate_y_raw, which denote the position on the field. We can also plot the area under the curve and confusion matrix:
 
 ```{r}
 final_xgb %>%
@@ -586,8 +519,7 @@ augment(fit_steph,steph_test)%>%
   autoplot()
 ```
 
-The model has a area under the curve of 0.78 and an accuracy of 0.73, the confusion
-matrix is displayed below:
+The model has a area under the curve of 0.78 and an accuracy of 0.73, the confusion matrix is displayed below:
 
 ```{r}
 collect_predictions(final_res) %>%
@@ -596,14 +528,11 @@ collect_predictions(final_res) %>%
   theme_minimal()
 ```
 
-It looks like the model is better at predicting shots that don't go in, whereas
-its accuracy is less clear cut when it comes to shots that actually went in. 
+It looks like the model is better at predicting shots that don't go in, whereas its accuracy is less clear cut when it comes to shots that actually went in.
 
 ### Previously unseen data - 2024 NBA season
 
-Up until now we have trained the model from the 2022 season up until the 2023 
-season. Let's get the 2024 season data and make our predictions on that, to 
-see how the model would perform with unseen data:
+Up until now we have trained the model from the 2022 season up until the 2023 season. Let's get the 2024 season data and make our predictions on that, to see how the model would perform with unseen data:
 
 ```{r}
 # Get the data for the new season:
@@ -627,9 +556,7 @@ nba_pbp %>%
          scoring_play = fct_rev(as_factor(scoring_play))) -> base_steph_pbp_2024
 ```
 
-Now we have Curry's 2024 season play-by-play data. Before predicting on the 2024
-data, we fit the model to the whole training data:
-
+Now we have Curry's 2024 season play-by-play data. Before predicting on the 2024 data, we fit the model to the whole training data:
 
 ```{r}
 
@@ -646,9 +573,7 @@ augment(fit_steph, base_steph_pbp_2024) %>%
 augment(fit_steph, base_steph_pbp_2024) -> steph_preds_2024
 ```
 
-The model gives us an area under the curve of 80%. We can also break down the 
-predictions according to specific sections of the basketball court and also 
-overlay the time on the clock when the shot was made:
+The model gives us an area under the curve of 80%. We can also break down the predictions according to specific sections of the basketball court and also overlay the time on the clock when the shot was made:
 
 ```{r}
 
@@ -668,12 +593,9 @@ shotchart(data=subdata, x="xx", y="yy", z="clock_minutes",
   guides(fill = guide_legend(title = "Clock Minutes",title.position = "top",title.hjust = 0.5))
 ```
 
-According to the model predictions, Curry is more likely to score when he is near
-the basket. Similarly, the model predicts that somewhere between 40-50% of shots 
-from the bottom left and right corners of the court will go in. 
+According to the model predictions, Curry is more likely to score when he is near the basket. Similarly, the model predicts that somewhere between 40-50% of shots from the bottom left and right corners of the court will go in.
 
-Let's take a look at the model results, specifically focusing on false negatives and 
-positives:
+Let's take a look at the model results, specifically focusing on false negatives and positives:
 
 ```{r}
 
@@ -698,25 +620,12 @@ shotchart(data=subdata, x="xx", y="yy",z="result" ,type=NULL,scatter=TRUE)+
   theme(legend.position = "bottom")
 ```
 
-It looks like the model predicts more false negatives for three pointers, i.e. 
-along the three point line, as shown by the red points. In contrast, for false 
-positives the concentration is mostly around the backboard, there is also a 
-concentration of false negatives slightly to the right of the backboard, 
-however for the most part it seems there are more false positives around that area. 
-In terms of accuracy, the model achieves 75% accuracy, which is not great, but 
-not terrible either.
+It looks like the model predicts more false negatives for three pointers, i.e. along the three point line, as shown by the red points. In contrast, for false positives the concentration is mostly around the backboard, there is also a concentration of false negatives slightly to the right of the backboard, however for the most part it seems there are more false positives around that area. In terms of accuracy, the model achieves 75% accuracy, which is not great, but not terrible either.
 
 ## Conclusion & Future Research Directions
 
-This project explores point guard trends in the NBA from season 2022 to 2024. It
-begins by visualising and aggregating key stats by player for the 2023 season. Next,
-we honed in on the top 6 point guards in the league, comparing their key stats, where
-Curry clearly stood out in terms of 3-pointers. We then refocused on Curry's play 
-by play data, given that was the original starting point of the project. Curry's 
-shot was overlayed onto the basketball court unveiling patterns in his shots. 
+This project explores point guard trends in the NBA from season 2022 to 2024. It begins by visualising and aggregating key stats by player for the 2023 season. Next, we honed in on the top 6 point guards in the league, comparing their key stats, where Curry clearly stood out in terms of 3-pointers. We then refocused on Curry's play by play data, given that was the original starting point of the project. Curry's shot was overlayed onto the basketball court unveiling patterns in his shots.
 
-The second part of the project 
+The second part of the project involves building an XGBoost classifier, that predicts whether Curry's shots will go in or not. The model was trained on the 2022 and 2023 seasons, and then used to predict plays in the 2024 season. The model achieved an AUC of 80% on the 2024 season data, with an accuracy of 75%. The play-by-play predictions were overlayed onto the basketball court, showing where the model predicted Curry would score, most importantly focusing on false negatives and false positives.
 
-
-
-
+Future iterations of the model should include additional data points, such as age and height, to see if these factors have an impact on the model's predictions. Similarly, training match data might help make the model predictions more robust. Another avenue of exploration, would be to experiment with feature engineering, such as using PCA to reduce the dimensionality of the data.
